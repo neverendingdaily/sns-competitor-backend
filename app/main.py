@@ -12,7 +12,11 @@ from app.routers import accounts, health
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("sns_competitor_backend")
 
-app = FastAPI(title="SNS Competitor Backend", version=config.APP_VERSION)
+app = FastAPI(
+    title="SNS競合分析バックエンド",
+    description="X、YouTube、Instagram、TikTok、Threadsのアカウント情報を検索・取得するためのAPIです。",
+    version=config.APP_VERSION,
+)
 
 app.add_middleware(
     CORSMiddleware,
