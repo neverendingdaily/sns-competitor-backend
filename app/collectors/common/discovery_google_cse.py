@@ -9,6 +9,14 @@ from app.collectors.common import net
 
 logger = logging.getLogger(__name__)
 
+# 【廃止・未使用】Google Custom Search JSON APIは2026年1月に新規プロジェクトへの
+# 提供を終了し（既存プロジェクトも2027-01-01に完全終了予定）、新規発行のAPIキーでは
+# 常に403(accessNotConfigured)が返るため、discovery(instagram/threads/tiktok)の
+# どのdiscovery.pyからも呼び出さなくなった。置き換え先は`discovery_brave.py`
+# （Brave Search API）・`discovery_serpapi.py`（SerpAPI）。このファイルは参照実装
+# として残しているが、削除については別途承認が必要（ワークスペースのファイル削除
+# ルールのため）。
+
 API_URL = "https://www.googleapis.com/customsearch/v1"
 
 # Google Custom Search JSON APIの1ページあたりの最大件数、および`start`パラメータの
@@ -70,11 +78,20 @@ def discover_via_google_cse(
         if response.status_code in (403, 429):
             # クォータ超過・キー無効等。実行時の設定ミスの可能性が高いため一度だけ
             # WARNINGを出すが、検索全体は空リストへフェイルソフトする。
+            # レスポンス本文にGoogle側の実際の理由（accessNotConfigured/
+            # API_KEY_HTTP_REFERRER_BLOCKED/dailyLimitExceededUnreg等）が
+            # JSONで入っているため、診断のためログに含める（APIキー自体は
+            # レスポンス本文に含まれないため機密漏洩の懸念はない）。
+            try:
+                body = response.text[:500]
+            except Exception:
+                body = "<body unavailable>"
             logger.warning(
-                "google cse quota/auth error (status=%d) for site=%s query=%s",
+                "google cse quota/auth error (status=%d) for site=%s query=%s body=%s",
                 response.status_code,
                 site,
                 query,
+                body,
             )
             break
         if not response.ok:

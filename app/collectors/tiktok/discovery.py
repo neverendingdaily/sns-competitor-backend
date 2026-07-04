@@ -6,8 +6,9 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 
 from app import config
-from app.collectors.common.discovery_google_cse import discover_via_google_cse
+from app.collectors.common.discovery_brave import discover_via_brave
 from app.collectors.common.discovery_search_engine import discover_via_search_engine
+from app.collectors.common.discovery_serpapi import discover_via_serpapi
 
 logger = logging.getLogger(__name__)
 
@@ -34,18 +35,31 @@ def _discover_via_ddg(query: str, limit: int) -> list[str]:
     )
 
 
-def _discover_via_cse(query: str, limit: int) -> list[str]:
-    # GOOGLE_CSE_API_KEY/GOOGLE_CSE_CX未設定時はdiscover_via_google_cse自体が
-    # 即座に空リストを返す（フェイルソフト、README参照）。
-    return discover_via_google_cse(
+def _discover_via_brave(query: str, limit: int) -> list[str]:
+    # BRAVE_SEARCH_API_KEY未設定時はdiscover_via_brave自体が即座に空リストを
+    # 返す（フェイルソフト、README参照）。
+    return discover_via_brave(
         query,
         site="tiktok.com",
         username_pattern=USERNAME_LINK_RE,
         reserved_paths=RESERVED_PATHS,
         max_pages=config.TIKTOK_DDG_MAX_PAGES,
         limit=limit,
-        api_key=config.GOOGLE_CSE_API_KEY,
-        cx=config.GOOGLE_CSE_CX,
+        api_key=config.BRAVE_SEARCH_API_KEY,
+    )
+
+
+def _discover_via_serpapi(query: str, limit: int) -> list[str]:
+    # SERPAPI_API_KEY未設定時はdiscover_via_serpapi自体が即座に空リストを
+    # 返す（フェイルソフト、README参照）。
+    return discover_via_serpapi(
+        query,
+        site="tiktok.com",
+        username_pattern=USERNAME_LINK_RE,
+        reserved_paths=RESERVED_PATHS,
+        max_pages=config.TIKTOK_DDG_MAX_PAGES,
+        limit=limit,
+        api_key=config.SERPAPI_API_KEY,
     )
 
 
@@ -58,20 +72,24 @@ def _safe_discover(source: str, discover_fn: Callable[[str, int], list[str]], qu
 
 
 def discover_candidates(query: str, limit: int) -> list[str]:
-    """DDG（既存）とGoogle CSE（`GOOGLE_CSE_API_KEY`/`GOOGLE_CSE_CX`設定時のみ）を
-    並列実行し、結果をdedupe-mergeする（`app/collectors/x/collector.py`の
-    `_discover_candidates`と同じ複数ソース統合パターン）。片方が失敗・未設定でも
-    もう片方の結果で継続するフェイルソフト設計（README「トラブルシューティング」参照）。
+    """DDG（既存）・Brave Search API（`BRAVE_SEARCH_API_KEY`設定時のみ）・SerpAPI
+    （`SERPAPI_API_KEY`設定時のみ）を並列実行し、結果をdedupe-mergeする
+    （`app/collectors/x/collector.py`の`_discover_candidates`と同じ複数ソース
+    統合パターン）。いずれかが失敗・未設定でも他の結果で継続するフェイルソフト設計
+    （README「トラブルシューティング」参照。Google CSEは新規プロジェクトで利用不能に
+    なったため置き換え済み）。
     """
-    with ThreadPoolExecutor(max_workers=2) as executor:
+    with ThreadPoolExecutor(max_workers=3) as executor:
         ddg_future = executor.submit(_safe_discover, "ddg", _discover_via_ddg, query, limit)
-        cse_future = executor.submit(_safe_discover, "google_cse", _discover_via_cse, query, limit)
+        brave_future = executor.submit(_safe_discover, "brave", _discover_via_brave, query, limit)
+        serpapi_future = executor.submit(_safe_discover, "serpapi", _discover_via_serpapi, query, limit)
         ddg_candidates = ddg_future.result()
-        cse_candidates = cse_future.result()
+        brave_candidates = brave_future.result()
+        serpapi_candidates = serpapi_future.result()
 
     candidates: list[str] = []
     seen: set[str] = set()
-    for username in [*ddg_candidates, *cse_candidates]:
+    for username in [*ddg_candidates, *brave_candidates, *serpapi_candidates]:
         if username in seen:
             continue
         seen.add(username)

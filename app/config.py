@@ -113,11 +113,20 @@ THREADS_PROFILE_CACHE_TTL = int(os.getenv("THREADS_PROFILE_CACHE_TTL", "3600"))
 # duckduckgo.comがISPレベルで遮断されている（README「トラブルシューティング」参照）。
 # 両方とも既定空文字＝無効・独立してオプトイン。詳細は`.env.example`参照。
 
-# Google Custom Search JSON APIをDDGの第二の発見(discovery)ソースとして使う場合に設定。
-# 無料枠は1日100クエリだが各検索が最大DDG_MAX_PAGES回分のクエリを消費しうるため、
-# 実運用では有料枠(1000クエリ$5、1日上限10,000クエリは有料でも変わらない)を想定すること。
-GOOGLE_CSE_API_KEY = os.getenv("GOOGLE_CSE_API_KEY", "")
-GOOGLE_CSE_CX = os.getenv("GOOGLE_CSE_CX", "")
+# 【廃止】Google Custom Search JSON APIは2026年1月に新規プロジェクトへの提供を終了し
+# (既存プロジェクトも2027-01-01に完全終了予定)、新規発行のAPIキーでは常に403
+# (accessNotConfigured)が返るため発見(discovery)ソースとして利用不能になった。
+# `discovery_google_cse.py`は参照実装として残しているが、以下のBrave Search API /
+# SerpAPIに置き換え済み（各discovery.pyからは呼び出していない）。
+
+# DDGの第二の発見(discovery)ソースとしてBrave Search APIを使う場合に設定。
+# 無料枠は月2,000クエリ程度(要最新確認)だが各検索が最大DDG_MAX_PAGES回分の
+# クエリを消費しうる点はGoogle CSE時代と同様。取得手順は.env.example参照。
+BRAVE_SEARCH_API_KEY = os.getenv("BRAVE_SEARCH_API_KEY", "")
+
+# DDGの第三の発見(discovery)ソースとしてSerpAPIを使う場合に設定。
+# 無料枠は月100クエリ程度と少なく基本的に有料(従量課金)前提。取得手順は.env.example参照。
+SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY", "")
 
 # DDGへの接続専用のオプトインHTTPプロキシ（緊急退避用・既定無効）。他プラットフォームの
 # 通信には一切使わない（Cookie付き認証リクエストが意図せずプロキシを経由する事故を防ぐため、

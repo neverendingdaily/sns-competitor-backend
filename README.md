@@ -36,7 +36,7 @@ uvicorn app.main:app --reload --port 8000
 |---|---|---|
 | YouTube検索/取得が`{"error": "YOUTUBE_API_KEY is not configured"}`（502）になる | `.env`に`YOUTUBE_API_KEY`が未設定（バグではなく意図した挙動） | `.env`にGoogle Cloud Consoleで取得したキーを設定してバックエンドを再起動 |
 | Xの`engagementRate`が常に`0.0` | `X_GRAPHQL_USERTWEETS_ID`が未設定（プロフィール本体の取得とは独立した機能で、これだけフェイルソフトする設計。詳細は下記「エンゲージメント率」節） | `.env`に`X_GRAPHQL_USERTWEETS_ID`を追加設定（他のXトークンだけでは足りない点に注意） |
-| Instagram/Threads/TikTokの検索（`queryType`が`keyword`/`hashtag`/`category`）が0件になる | これら3プラットフォームの候補発見（discovery）は`html.duckduckgo.com`（DuckDuckGo html-lite）に依存しており、**同サイトへの接続がネットワークレベルでブロックされている環境がある**（実機確認: `openssl s_client`で提示された証明書が`CN=internetpositif.id`という検閲/フィルタリングシステムのブロックページ証明書（期限切れ）で、DuckDuckGo自身の証明書ではなかった。`instagram.com`/`google.com`/`googleapis.com`は同じ環境から正規の証明書が返る）。フロントエンドのAPI接続自体は問題ない（0件はバックエンドがfail-softで200 OK・空配列を返す設計のため、接続エラーとしては現れない） | `GOOGLE_CSE_API_KEY`/`GOOGLE_CSE_CX`（Google Custom Search APIを第二の発見ソースとして使う。`.env.example`に取得手順あり）を設定する。または`DISCOVERY_PROXY_URL`（DDG宛のみのオプトインプロキシ）を設定する。詳細は下記「Discovery：DuckDuckGo遮断への対応」参照。`queryType=username`（ユーザー名の完全一致検索）であればDiscoveryを経由しないため、これらを設定しなくても影響を受けない（下記「ユーザー名検索（queryType=username）はDiscoveryを経由しない」参照） |
+| Instagram/Threads/TikTokの検索（`queryType`が`keyword`/`hashtag`/`category`）が0件になる | これら3プラットフォームの候補発見（discovery）は`html.duckduckgo.com`（DuckDuckGo html-lite）に依存しており、**同サイトへの接続がネットワークレベルでブロックされている環境がある**（実機確認: `openssl s_client`で提示された証明書が`CN=internetpositif.id`という検閲/フィルタリングシステムのブロックページ証明書（期限切れ）で、DuckDuckGo自身の証明書ではなかった。`instagram.com`/`google.com`は同じ環境から正規の証明書が返る）。フロントエンドのAPI接続自体は問題ない（0件はバックエンドがfail-softで200 OK・空配列を返す設計のため、接続エラーとしては現れない） | `BRAVE_SEARCH_API_KEY`（Brave Search APIを第二の発見ソースとして使う。`.env.example`に取得手順あり）または`SERPAPI_API_KEY`（SerpAPI、補助）を設定する。または`DISCOVERY_PROXY_URL`（DDG宛のみのオプトインプロキシ）を設定する。詳細は下記「Discovery：DuckDuckGo遮断への対応」参照。**Google Custom Search API(`GOOGLE_CSE_API_KEY`)は2026年1月に新規プロジェクトへの提供が終了しており、新規キーでは常に403になるため使用不可**。`queryType=username`（ユーザー名の完全一致検索）であればDiscoveryを経由しないため、これらを設定しなくても影響を受けない（下記「ユーザー名検索（queryType=username）はDiscoveryを経由しない」参照） |
 
 いずれの症状も`.env`未設定または外部サイト側の理由によるもので、アプリのコード自体に起因する不具合ではないことを確認済み。
 
@@ -108,17 +108,22 @@ uvicorn app.main:app --reload --port 8000
 - `session.py` — `load_cookies(path, required_names)` / `build_session(cookies, domain, headers)`。ブラウザ拡張エクスポート形式のCookie読み込みと`requests.Session`構築
 - `cache.py` — `TTLCache(ttl_seconds)`。username→AccountのシンプルなTTLキャッシュ
 - `discovery_search_engine.py` — `discover_via_search_engine(query, *, site, username_pattern, reserved_paths, max_pages, limit, proxies, ...)`。DuckDuckGo html-lite経由の`site:`検索＋ページネーションによる候補ユーザー名発見
-- `discovery_google_cse.py` — `discover_via_google_cse(query, *, site, username_pattern, reserved_paths, max_pages, limit, api_key, cx, ...)`。Google Custom Search JSON API経由の`site:`検索＋ページネーションによる候補ユーザー名発見（`api_key`/`cx`未設定時は即座に空リストを返すフェイルソフト設計）。DDGへの接続がブロックされている環境向けの第二の発見ソース
+- `discovery_brave.py` — `discover_via_brave(query, *, site, username_pattern, reserved_paths, max_pages, limit, api_key, ...)`。Brave Search API経由の`site:`検索＋ページネーションによる候補ユーザー名発見（`api_key`未設定時は即座に空リストを返すフェイルソフト設計）。DDGへの接続がブロックされている環境向けの第二の発見ソース
+- `discovery_serpapi.py` — `discover_via_serpapi(query, *, site, username_pattern, reserved_paths, max_pages, limit, api_key, ...)`。SerpAPI(Google engine)経由の`site:`検索＋ページネーションによる候補ユーザー名発見（`api_key`未設定時は即座に空リストを返すフェイルソフト設計）。DDG/Brave両方が使えない環境向けの第三の発見ソース
+- `discovery_google_cse.py` — **【廃止・未使用】** Google Custom Search JSON API経由の実装。同APIが2026年1月に新規プロジェクトへの提供を終了した(既存プロジェクトも2027-01-01に完全終了予定)ため、新規発行のAPIキーでは常に403(accessNotConfigured)になり利用不能。上記`discovery_brave.py`/`discovery_serpapi.py`に置き換え済みで、どのdiscovery.pyからも呼び出していない（参照実装として残置。ファイル削除はワークスペースルールにより別途承認が必要）
 
 `app/collectors/x/net.py`・`session.py`・`cache.py`・`discovery_search_engine.py`は、上記共通基盤を呼び出す薄いラッパー（X固有のBearer/CSRF組み立てなど）として残っている。
 
 ## Discovery：DuckDuckGo遮断への対応
 
-instagram/threads/tiktokの候補発見（discovery）はDDGのみに依存していたため、DDGがネットワークレベルでブロックされている環境（上記「トラブルシューティング」参照）では検索が0件になっていた。これに対応するため、各プラットフォームの`discovery.py`の`discover_candidates()`は、DDG（既存）とGoogle Custom Search API（新規）を`ThreadPoolExecutor`で並列実行し、結果をdedupe-mergeするマルチソース設計になっている（`app/collectors/x/collector.py`の`_discover_candidates`が採用しているTogetter+DDGの統合パターンと同じ形）。各ソースは個別にtry/exceptでラップされており、片方が失敗・未設定でももう片方の結果だけで検索は継続する。
+instagram/threads/tiktokの候補発見（discovery）はDDGのみに依存していたため、DDGがネットワークレベルでブロックされている環境（上記「トラブルシューティング」参照）では検索が0件になっていた。これに対応するため、各プラットフォームの`discovery.py`の`discover_candidates()`は、DDG（既存）・Brave Search API・SerpAPIを`ThreadPoolExecutor`で並列実行し、結果をdedupe-mergeするマルチソース設計になっている（`app/collectors/x/collector.py`の`_discover_candidates`が採用しているTogetter+DDGの統合パターンと同じ形）。各ソースは個別にtry/exceptでラップされており、一部が失敗・未設定でも他の結果だけで検索は継続する。
 
-- **Google Custom Search API（`GOOGLE_CSE_API_KEY`/`GOOGLE_CSE_CX`、任意・既定無効）**：`googleapis.com`は実機確認でこの種のISPレベル遮断の影響を受けていないことを確認済み（DDGとは別ドメインのため構造的に回避できる）。DDGとはページネーション方式（`start`パラメータ、1始まり10刻み最大100件）・レスポンス形式（構造化JSON `items[].link`、HTML正規表現ではない）が異なる点に注意。無料枠は1日100クエリだが1回の検索で`*_DDG_MAX_PAGES`回分消費しうるため、実運用では有料枠（1000クエリ$5、1日上限10,000は有料でも変わらない）を前提とすること。取得手順は`.env.example`参照。
-- **`DISCOVERY_PROXY_URL`（任意・既定無効、緊急退避用）**：DDG宛のリクエストにのみ明示的に渡すオプトインHTTPプロキシ。他プラットフォーム（instagram.com・x.com・tiktok.comのoEmbed等）の通信には一切使わない。共有・データセンター系プロキシの出口IPは他テナントと共有されており、DDG側から見て既にレート制限/ブロック対象になっている可能性がある点に注意（`net.py`が担保する「自分のペースを守る」礼儀正しさの前提が崩れうる）。上記のGoogle CSEの方が構造的に堅牢なため基本はそちらを推奨し、こちらは補助的な位置づけ。
-- 両方設定した場合はDDG（プロキシ経由）とGoogle CSEの両方の候補がdedupe-mergeされる。
+**【重要】Google Custom Search API（旧・第二の発見ソース）は廃止済み**：同APIは2026年1月に新規プロジェクトへの提供を終了し(既存プロジェクトも2027-01-01に完全終了予定)、新規発行のAPIキーでは`.env`/`GOOGLE_CSE_CX`を正しく設定しても常に403(`accessNotConfigured`/`This project does not have the access to Custom Search JSON API.`)が返り利用不能。以下のBrave Search API・SerpAPIに置き換え済み。
+
+- **Brave Search API（`BRAVE_SEARCH_API_KEY`、任意・既定無効、推奨・主軸）**：`api.search.brave.com`は実機確認でこの種のISPレベル遮断の影響を受けていないことを確認済み（DDGとは別ドメインのため構造的に回避できる）。DDGとはページネーション方式（`offset`パラメータ、0始まりページ単位）・レスポンス形式（構造化JSON `web.results[].url`、HTML正規表現ではない）が異なる点に注意。無料枠・レート制限はプラン改定されうるため契約時にダッシュボードで最新情報を確認すること。取得手順は`.env.example`参照。
+- **SerpAPI（`SERPAPI_API_KEY`、任意・既定無効、補助）**：Google検索結果を高精度に取得できるが無料枠は少なく(月100件程度)、実運用では従量課金前提。DDGとはページネーション方式（`start`パラメータ、0始まり結果件数単位）・レスポンス形式（構造化JSON `organic_results[].link`）が異なる点に注意。取得手順は`.env.example`参照。
+- **`DISCOVERY_PROXY_URL`（任意・既定無効、緊急退避用）**：DDG宛のリクエストにのみ明示的に渡すオプトインHTTPプロキシ。他プラットフォーム（instagram.com・x.com・tiktok.comのoEmbed等）の通信には一切使わない。共有・データセンター系プロキシの出口IPは他テナントと共有されており、DDG側から見て既にレート制限/ブロック対象になっている可能性がある点に注意（`net.py`が担保する「自分のペースを守る」礼儀正しさの前提が崩れうる）。上記のBrave Search APIの方が構造的に堅牢なため基本はそちらを推奨し、こちらは補助的な位置づけ。
+- 複数設定した場合はDDG（プロキシ経由）・Brave・SerpAPIの候補がすべてdedupe-mergeされる。
 
 ## TikTokモジュールの制約（限定実装）
 

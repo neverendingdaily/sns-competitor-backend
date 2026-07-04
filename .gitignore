@@ -5,3 +5,5 @@ __pycache__/
 x_cookies.json
 *_cookies.json
 secrets/
+*.log
+.claude/
