@@ -17,10 +17,11 @@ X_REQUEST_JITTER_MAX = float(os.getenv("X_REQUEST_JITTER_MAX", "8"))
 X_SEARCH_TARGET_COUNT = int(os.getenv("X_SEARCH_TARGET_COUNT", "30"))
 # 取得失敗・フィルタ除外を見込んで発見しておく候補数の上限。
 # 候補1件につきGraphQL呼び出しを2回（プロフィール取得＋直近ツイート取得）行うため、
-# 件数が多いほどRenderの実行時間上限（約120秒）を超えやすい。既定を3件に抑えて
-# タイムアウトを回避する（README「Xモジュールの制約」参照）。
+# 件数が多いほどRenderの実行時間上限（約120秒）を超えやすい。
+# net.py側のmax_concurrency対応（同時実行数が実際にスループットへ反映される）
+# 修正後は10件でも実行時間上限内に収まることを実機確認済み。
 X_DISCOVERY_MAX_CANDIDATES = int(
-    os.getenv("X_DISCOVERY_MAX_CANDIDATES", os.getenv("X_SEARCH_MAX_CANDIDATES", "3"))
+    os.getenv("X_DISCOVERY_MAX_CANDIDATES", os.getenv("X_SEARCH_MAX_CANDIDATES", "10"))
 )
 
 # Togetter探索のページネーション設定
@@ -55,6 +56,12 @@ X_GRAPHQL_USERTWEETS_ID = os.getenv("X_GRAPHQL_USERTWEETS_ID", "")
 X_ENGAGEMENT_RECENT_POSTS = int(os.getenv("X_ENGAGEMENT_RECENT_POSTS", "5"))
 # 引用ツイート(quote_count)をエンゲージメント数に含めるか
 X_ENGAGEMENT_INCLUDE_QUOTES = os.getenv("X_ENGAGEMENT_INCLUDE_QUOTES", "true").strip().lower() == "true"
+
+# --- Xの品質フィルタ（アフィリエイトのモデリングに適さないスパム/放置アカウントの足切り） ---
+# フォロワー数がこの値未満のアカウントは除外する
+X_MIN_FOLLOWERS = int(os.getenv("X_MIN_FOLLOWERS", "100"))
+# 最終投稿からこの日数を超えて経過している（=放置されている）アカウントは除外する
+X_MAX_INACTIVE_DAYS = int(os.getenv("X_MAX_INACTIVE_DAYS", "180"))
 
 # プロフィール取得結果のキャッシュ有効期限（秒）
 X_PROFILE_CACHE_TTL = int(os.getenv("X_PROFILE_CACHE_TTL", "3600"))

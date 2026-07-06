@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from typing import Callable
 
 from app import config
@@ -12,6 +13,11 @@ from app.errors import AccountNotFoundError, UpstreamUnavailableError
 from app.models import Account, SearchParams
 
 logger = logging.getLogger(__name__)
+
+# Xのデフォルト（未設定）アバター画像のURLに含まれる既知のマーカー。
+# アイコン未設定のままの、いわゆる「タマゴアイコン」はスパム/放置アカウントの
+# 強いシグナルであるため品質フィルタで除外する。
+DEFAULT_AVATAR_MARKERS = ("default_profile_images", "default_profile_normal")
 
 
 class XCollector(BaseCollector):
@@ -53,6 +59,7 @@ class XCollector(BaseCollector):
                         pending.cancel()
                     break
 
+        accounts = [a for a in accounts if self._is_quality_account(a)]
         return self._apply_filters(accounts, params)
 
     def get_account(self, account_id: str) -> Account:
@@ -102,6 +109,40 @@ class XCollector(BaseCollector):
         except Exception:
             logger.exception("%s discovery failed for query=%s", source, query)
             return []
+
+    # -- quality filter --------------------------------------------------
+    # アフィリエイトのモデリング対象として不適切な、スパム・放置・情報不足の
+    # アカウントを検索結果から除外する（ユーザーが`filters`で明示的に指定する
+    # `_apply_filters`とは別の、常時適用される足切り）。`get_account`（既知の
+    # 1アカウントの詳細取得）には適用しない — 指定されたアカウントを見たいという
+    # 意図を尊重し、品質判定で勝手に404扱いにはしない。
+
+    def _is_quality_account(self, account: Account) -> bool:
+        if account.followers < config.X_MIN_FOLLOWERS:
+            return False
+        if not account.bio.strip():
+            # プロフィール自己紹介が空＝プロフィールの充実度が低いスパム/放置アカウントの
+            # 典型的なシグナル。
+            return False
+        if not account.avatar_url or any(marker in account.avatar_url for marker in DEFAULT_AVATAR_MARKERS):
+            # アバター未設定（デフォルトのタマゴアイコン）。
+            return False
+        if not self._is_recently_active(account.last_posted_at):
+            return False
+        return True
+
+    @staticmethod
+    def _is_recently_active(last_posted_at: str) -> bool:
+        try:
+            posted_at = datetime.fromisoformat(last_posted_at)
+        except ValueError:
+            # 解析できない場合は「活動中かどうか判断できない」だけであり、
+            # 積極的に除外する根拠にはしない（フェイルソフト）。
+            return True
+        if posted_at.tzinfo is None:
+            posted_at = posted_at.replace(tzinfo=timezone.utc)
+        age_days = (datetime.now(timezone.utc) - posted_at).days
+        return age_days <= config.X_MAX_INACTIVE_DAYS
 
     # -- filters -------------------------------------------------------
 
