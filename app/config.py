@@ -15,9 +15,12 @@ X_REQUEST_JITTER_MAX = float(os.getenv("X_REQUEST_JITTER_MAX", "8"))
 
 # 検索で最終的に返したい件数（フィルタ後の目標値）
 X_SEARCH_TARGET_COUNT = int(os.getenv("X_SEARCH_TARGET_COUNT", "30"))
-# 取得失敗・フィルタ除外を見込んで発見しておく候補数の上限
+# 取得失敗・フィルタ除外を見込んで発見しておく候補数の上限。
+# 候補1件につきGraphQL呼び出しを2回（プロフィール取得＋直近ツイート取得）行うため、
+# 件数が多いほどRenderの実行時間上限（約120秒）を超えやすい。既定を3件に抑えて
+# タイムアウトを回避する（README「Xモジュールの制約」参照）。
 X_DISCOVERY_MAX_CANDIDATES = int(
-    os.getenv("X_DISCOVERY_MAX_CANDIDATES", os.getenv("X_SEARCH_MAX_CANDIDATES", "45"))
+    os.getenv("X_DISCOVERY_MAX_CANDIDATES", os.getenv("X_SEARCH_MAX_CANDIDATES", "3"))
 )
 
 # Togetter探索のページネーション設定
@@ -79,7 +82,9 @@ TIKTOK_PROFILE_CACHE_TTL = int(os.getenv("TIKTOK_PROFILE_CACHE_TTL", "3600"))
 # INSTAGRAM_COOKIES_PATH等の認証ティアは必須機能ではなく任意のアップグレード
 # （ブロック耐性向上・非公開フォロー中アカウント閲覧が目的）。
 INSTAGRAM_SEARCH_TARGET_COUNT = int(os.getenv("INSTAGRAM_SEARCH_TARGET_COUNT", "20"))
-INSTAGRAM_DISCOVERY_MAX_CANDIDATES = int(os.getenv("INSTAGRAM_DISCOVERY_MAX_CANDIDATES", "30"))
+# 候補数が多いほどハイドレーション（プロフィール取得）に時間がかかり、Renderの
+# 実行時間上限（約120秒）を超えて検索結果が0件に見えてしまうため既定値を抑えている。
+INSTAGRAM_DISCOVERY_MAX_CANDIDATES = int(os.getenv("INSTAGRAM_DISCOVERY_MAX_CANDIDATES", "10"))
 INSTAGRAM_DDG_MAX_PAGES = int(os.getenv("INSTAGRAM_DDG_MAX_PAGES", "3"))
 INSTAGRAM_HYDRATE_CONCURRENCY = int(os.getenv("INSTAGRAM_HYDRATE_CONCURRENCY", "3"))
 INSTAGRAM_JITTER_MIN = float(os.getenv("INSTAGRAM_JITTER_MIN", "2"))

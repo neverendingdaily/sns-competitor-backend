@@ -42,12 +42,23 @@ def _get_semaphore(key: str, max_concurrency: int) -> threading.Semaphore:
         return semaphore
 
 
-def _reserve_slot(key: str, interval_range: tuple[float, float]) -> None:
-    """同一バケットへのリクエスト開始時刻を予約し、最小間隔を守る（礼儀正しさの担保）。"""
+def _reserve_slot(key: str, interval_range: tuple[float, float], max_concurrency: int) -> None:
+    """同一バケットへのリクエスト開始時刻を予約し、最小間隔を守る（礼儀正しさの担保）。
+
+    `_next_start_at`はバケット単位で単一の予約列であるため、`interval_range`を
+    そのまま使うと`max_concurrency`（同時実行数）を上げても開始時刻の間隔が
+    縮まらず、実質的に直列実行と変わらない待ち時間になってしまう
+    （`max_concurrency`本の並行レーンがあるのに予約列が1本だけのため）。
+    そのため間隔を`max_concurrency`で割り、N本の並行レーンで待ち時間を
+    分担しているのと同等になるよう調整する（1レーンあたりの間隔は変えず、
+    全体のリクエストレートだけがconcurrencyに比例して上がる）。
+    """
     with _schedule_lock:
         now = time.monotonic()
         start = max(now, _next_start_at.get(key, 0.0))
-        _next_start_at[key] = start + random.uniform(*interval_range)
+        lo, hi = interval_range
+        step = random.uniform(lo, hi) / max(max_concurrency, 1)
+        _next_start_at[key] = start + step
 
     wait = start - time.monotonic()
     if wait > 0:
@@ -85,7 +96,7 @@ def polite_get(
     semaphore = _get_semaphore(key, max_concurrency)
     semaphore.acquire()
     try:
-        _reserve_slot(key, resolved_interval_range)
+        _reserve_slot(key, resolved_interval_range, max_concurrency)
         client = session or requests
         try:
             return client.get(
