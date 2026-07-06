@@ -41,3 +41,13 @@ class SearchParams(CamelModel):
     query: str = Field(..., description="検索語句。queryTypeに応じてキーワード・ハッシュタグ・カテゴリ名・ユーザー名として解釈される")
     query_type: QueryType = Field(..., description="検索方式（keyword/hashtag/category/username）")
     filters: SearchFilters = Field(..., description="検索結果を絞り込むための追加条件")
+    max_results: Optional[int] = Field(
+        None,
+        ge=0,
+        le=50,
+        description=(
+            "このリクエストに限り、発見（discovery）する候補数の上限を環境変数の既定値から上書きする。"
+            "未指定の場合は環境変数の既定値を使用する。0を指定した場合はこのプラットフォームの検索処理自体を"
+            "スキップし、空配列を即座に返す"
+        ),
+    )

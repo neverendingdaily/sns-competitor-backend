@@ -16,13 +16,19 @@ class ThreadsCollector(BaseCollector):
     platform = "threads"
 
     def search(self, params: SearchParams) -> list[Account]:
+        if params.max_results == 0:
+            # 呼び出し元がこのプラットフォームの検索を明示的にスキップしたい場合
+            # （フロントエンドのプラットフォーム別取得件数設定で0を指定した場合）。
+            return []
+
         if params.query_type == "username":
             # ユーザー名が既知の場合はDiscovery（DDG）を経由せず直接候補にする。
             # YouTubeの_lookup_by_handle相当（app/collectors/youtube.py参照）。
             username = params.query.strip().lstrip("@")
             candidates = [username] if username else []
         else:
-            candidates = discovery.discover_candidates(params.query, config.THREADS_DISCOVERY_MAX_CANDIDATES)
+            limit = params.max_results if params.max_results is not None else config.THREADS_DISCOVERY_MAX_CANDIDATES
+            candidates = discovery.discover_candidates(params.query, limit)
         if not candidates:
             return []
 

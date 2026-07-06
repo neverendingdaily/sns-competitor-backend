@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Callable, Optional
 
 from app import config
 from app.collectors.base import BaseCollector
@@ -24,13 +24,18 @@ class XCollector(BaseCollector):
     platform = "x"
 
     def search(self, params: SearchParams) -> list[Account]:
+        if params.max_results == 0:
+            # 呼び出し元がこのプラットフォームの検索を明示的にスキップしたい場合
+            # （フロントエンドのプラットフォーム別取得件数設定で0を指定した場合）。
+            return []
+
         if params.query_type == "username":
             # ユーザー名が既知の場合はDiscovery（Togetter/DDG）を経由せず直接候補にする。
             # YouTubeの_lookup_by_handle相当（app/collectors/youtube.py参照）。
             username = params.query.strip().lstrip("@")
             candidates = [username] if username else []
         else:
-            candidates = self._discover_candidates(params.query)
+            candidates = self._discover_candidates(params.query, params.max_results)
         if not candidates:
             return []
 
@@ -71,8 +76,8 @@ class XCollector(BaseCollector):
 
     # -- discovery -----------------------------------------------------
 
-    def _discover_candidates(self, query: str) -> list[str]:
-        limit = config.X_DISCOVERY_MAX_CANDIDATES
+    def _discover_candidates(self, query: str, max_results: Optional[int] = None) -> list[str]:
+        limit = max_results if max_results is not None else config.X_DISCOVERY_MAX_CANDIDATES
 
         with ThreadPoolExecutor(max_workers=2) as executor:
             togetter_future = executor.submit(
@@ -118,7 +123,12 @@ class XCollector(BaseCollector):
     # 意図を尊重し、品質判定で勝手に404扱いにはしない。
 
     def _is_quality_account(self, account: Account) -> bool:
-        if account.followers < config.X_MIN_FOLLOWERS:
+        # followers=0はCookie未設定時の非認証metaタグ取得（profile_scraper.
+        # _fetch_profile_via_meta_tags）が常に返す「取得不可」のセンチネル値であり、
+        # 「実際にフォロワー0人」と区別が付かない。取得できなかっただけのアカウントを
+        # 誤って全て弾いてしまわないよう、0（未取得）はこの足切りの対象外とする
+        # （実際に少数だが取得できた既知の値のみを閾値判定する）。
+        if 0 < account.followers < config.X_MIN_FOLLOWERS:
             return False
         if not account.bio.strip():
             # プロフィール自己紹介が空＝プロフィールの充実度が低いスパム/放置アカウントの

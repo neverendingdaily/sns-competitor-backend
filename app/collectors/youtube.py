@@ -22,6 +22,11 @@ class YouTubeCollector(BaseCollector):
     platform = "youtube"
 
     def search(self, params: SearchParams) -> list[Account]:
+        if params.max_results == 0:
+            # 呼び出し元がこのプラットフォームの検索を明示的にスキップしたい場合
+            # （フロントエンドのプラットフォーム別取得件数設定で0を指定した場合）。
+            return []
+
         channel_ids = self._discover_channel_ids(params)
         if not channel_ids:
             return []
@@ -43,11 +48,12 @@ class YouTubeCollector(BaseCollector):
             if channel_id:
                 return [channel_id]
 
+        limit = params.max_results if params.max_results is not None else MAX_SEARCH_CANDIDATES
         data = self._get("/search", {
             "part": "snippet",
             "type": "channel",
             "q": params.query,
-            "maxResults": MAX_SEARCH_CANDIDATES,
+            "maxResults": limit,
         })
         return [
             item["id"]["channelId"]
