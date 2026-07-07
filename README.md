@@ -96,11 +96,21 @@ uvicorn app.main:app --reload --port 8000
 - `X_COOKIES_PATH`等が未設定の場合、`bio`（og:description）・投稿数（`twitter:data1`、labelが"Posts"の時のみ）・表示名・アバター画像のみ取得できる。`followers`/`following`は常に`0`、`isVerified` / `category` / `engagementRate` / `lastPostedAt`も固定値・近似値のまま。
 - 上記制約により、`followersMin`等のフィルタを非認証モードでXの検索に使うと常に空振りする点に注意。同じ理由で下記「品質フィルタ」のフォロワー数下限も、`followers=0`（取得不可のセンチネル値）はチェック対象外にしている。
 
+### フォロワー数・フォロー数の推測フォールバック（Brave Searchスニペット解析）
+
+`followers=0`かつ`following=0`（非認証metaタグ取得等による「取得不可」のセンチネル値）のまま返ってきたアカウントに限り、`app/collectors/x/follower_estimate.py`の`estimate_counts`がBrave Search API（`{username} x.com followers following`で検索）の検索結果スニペット（`title`/`description`）を正規表現で解析し、「55 Following · 27 Followers」「12.3万フォロワー」のような記述から数値を推測して補完する（`app/collectors/x/profile_scraper.py`の`fetch_profile`から呼び出し）。
+
+- 無関係なページ（他アカウントの言及・別プラットフォームの集計サイト等）の数値を誤って拾わないよう、本人のプロフィールURL（`x.com/{username}`等）に紐づく検索結果のみを対象にする。
+- `BRAVE_SEARCH_API_KEY`未設定、またはスニペットに該当する記述が見つからない場合はNoneを返し、`followers`/`following`は`0`のままフェイルソフトする（100%の精度は保証されない推測値である点に注意）。
+- 呼び出しは`bucket="brave-search-api:x-follower-estimate"`として他プラットフォームのdiscovery用Brave呼び出しとは別のレート制御バケットで管理される（`X_FOLLOWER_ESTIMATE_JITTER_MIN/MAX`・`X_FOLLOWER_ESTIMATE_CONCURRENCY`、詳細は`.env.example`参照）。
+
 ### 品質フィルタ（スパム・放置アカウントの足切り）
 
 `XCollector._is_quality_account`が`search`（一覧検索）の結果にのみ常時適用する（`filters`によるユーザー指定の絞り込みとは別）。アフィリエイトのモデリング対象として不適切なアカウントを除外する目的で、以下をすべて満たすアカウントのみ残す:
 
 - フォロワー数が`X_MIN_FOLLOWERS`（既定100）以上。**ただし`followers=0`は「非認証モードで取得できなかった」センチネル値であり実際のフォロワー0人と区別できないため、この下限チェックの対象外**（`X_COOKIES_PATH`未設定のRender環境等で全件が誤って弾かれ検索結果が0件に見える不具合の再発防止、2026-07-07修正）
+- **FF比（フォロワー数÷フォロー数）が1.0以上**（フォロワー数・フォロー数が共に取得・推測できている場合のみ判定。フォロワー数がフォロー数を下回るアカウントは、フォローバック狙いで大量フォローしている一般・スパムアカウントとみなして除外する。2026-07-08追加）
+- **フォロワー数・フォロー数がBrave推測を含めても一切取得できなかった（0/0のままの）場合は、投稿数が1件以上あり、かつ自己紹介文に典型的なスパムキーワード（`XCollector.SPAM_BIO_KEYWORDS`参照。「相互フォロー」「フォロバ100」「副業で稼」等）が含まれていないこと**（判定材料が実質無いアカウントに対する最後の足切り。2026-07-08追加）
 - プロフィール自己紹介（`bio`）が空でない
 - アバター画像がデフォルト（タマゴアイコン）でない
 - 最終投稿から`X_MAX_INACTIVE_DAYS`（既定180）日以内に活動している

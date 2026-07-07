@@ -66,6 +66,15 @@ X_MAX_INACTIVE_DAYS = int(os.getenv("X_MAX_INACTIVE_DAYS", "180"))
 # プロフィール取得結果のキャッシュ有効期限（秒）
 X_PROFILE_CACHE_TTL = int(os.getenv("X_PROFILE_CACHE_TTL", "3600"))
 
+# GraphQL/metaタグでフォロワー数・フォロー数が取得できなかった(0のまま)場合のみ、
+# Brave Search APIのスニペットからの数値推測フォールバックを試みる
+# （app/collectors/x/follower_estimate.py）。BRAVE_SEARCH_API_KEY未設定なら自動的に
+# 無効（フェイルソフト）。discovery用のBrave呼び出し（bucket=ホスト名）とは別バケット
+# にして、他プラットフォームのdiscoveryと待ち時間を奪い合わないようにしている。
+X_FOLLOWER_ESTIMATE_JITTER_MIN = float(os.getenv("X_FOLLOWER_ESTIMATE_JITTER_MIN", "1.0"))
+X_FOLLOWER_ESTIMATE_JITTER_MAX = float(os.getenv("X_FOLLOWER_ESTIMATE_JITTER_MAX", "2.0"))
+X_FOLLOWER_ESTIMATE_CONCURRENCY = int(os.getenv("X_FOLLOWER_ESTIMATE_CONCURRENCY", "3"))
+
 # --- TikTok ---
 # 実サイト確認済み(2026-07時点): プロフィールページはWAFチャレンジで保護されており
 # 非ログインでは取得不可。公式oEmbedエンドポイント(非WAF・非ログイン)経由で
