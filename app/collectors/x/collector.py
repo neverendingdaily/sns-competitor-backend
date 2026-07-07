@@ -7,6 +7,7 @@ from typing import Callable, Optional
 
 from app import config
 from app.collectors.base import BaseCollector
+from app.collectors.common.quality_gate import passes_universal_quality_gate
 from app.collectors.x import discovery_search_engine, discovery_togetter, profile_scraper
 from app.collectors.x import session as x_session
 from app.errors import AccountNotFoundError, UpstreamUnavailableError
@@ -18,16 +19,6 @@ logger = logging.getLogger(__name__)
 # アイコン未設定のままの、いわゆる「タマゴアイコン」はスパム/放置アカウントの
 # 強いシグナルであるため品質フィルタで除外する。
 DEFAULT_AVATAR_MARKERS = ("default_profile_images", "default_profile_normal")
-
-# follower/followingがどうしても取得・推測できず0のままだったアカウント（後述の
-# _is_quality_account参照）に対してのみ適用する簡易スパムキーワードチェック。
-# 実フォロワー数で判定できるアカウントには適用しない（誤検知で正常アカウントを
-# 弾くリスクを避けるため、判定材料が無い場合の最後の砦としてのみ使う）。
-SPAM_BIO_KEYWORDS = (
-    "相互フォロー", "フォロバ100", "フォロバ最速", "全フォロバ", "即フォロバ",
-    "副業で稼", "在宅で稼", "簡単に稼", "権利収入", "不労所得", "月収",
-    "line@", "LINE@", "出会い系", "エロ動画", "アダルト動画", "裏垢",
-)
 
 
 class XCollector(BaseCollector):
@@ -133,45 +124,20 @@ class XCollector(BaseCollector):
     # 意図を尊重し、品質判定で勝手に404扱いにはしない。
 
     def _is_quality_account(self, account: Account) -> bool:
-        # followers=0はCookie未設定時の非認証metaタグ取得（profile_scraper.
-        # _fetch_profile_via_meta_tags）が常に返す「取得不可」のセンチネル値であり、
-        # 「実際にフォロワー0人」と区別が付かない。取得できなかっただけのアカウントを
-        # 誤って全て弾いてしまわないよう、0（未取得）はこの足切りの対象外とする
-        # （実際に少数だが取得できた既知の値のみを閾値判定する）。
-        # なお0の場合はprofile_scraper側でBrave Searchスニペットからの推測を
-        # 既に試みた後の値であり、それでも0のままなら本当に取得不可だったケース。
-        if 0 < account.followers < config.X_MIN_FOLLOWERS:
+        # 投稿数0・フォロワー数不足・FF比1.0未満・スパムキーワードは全プラット
+        # フォーム共通の判定（app/collectors/common/quality_gate.py）。
+        if not passes_universal_quality_gate(account, min_followers=config.X_MIN_FOLLOWERS):
             return False
-
-        if account.followers > 0 and account.following > 0:
-            # FF比（フォロワー数÷フォロー数）が1.0未満＝フォローバック狙いで
-            # 大量フォローしている一般・スパムアカウントとみなして除外する。
-            if account.followers < account.following:
-                return False
-        elif account.followers == 0 and account.following == 0:
-            # フォロワー数・フォロー数のどちらも取得・推測できなかったアカウント。
-            # 投稿が一件も確認できていない（＝活動実態の裏付けが一切無い）か、
-            # 自己紹介文に典型的なスパムキーワードが含まれる場合はノイズとみなし除外する。
-            if account.posts_count == 0:
-                return False
-            if self._has_spam_signal(account.bio):
-                return False
-
         if not account.bio.strip():
             # プロフィール自己紹介が空＝プロフィールの充実度が低いスパム/放置アカウントの
-            # 典型的なシグナル。
+            # 典型的なシグナル（X固有の追加チェック）。
             return False
         if not account.avatar_url or any(marker in account.avatar_url for marker in DEFAULT_AVATAR_MARKERS):
-            # アバター未設定（デフォルトのタマゴアイコン）。
+            # アバター未設定（デフォルトのタマゴアイコン、X固有の追加チェック）。
             return False
         if not self._is_recently_active(account.last_posted_at):
             return False
         return True
-
-    @staticmethod
-    def _has_spam_signal(bio: str) -> bool:
-        lowered = bio.lower()
-        return any(keyword.lower() in lowered for keyword in SPAM_BIO_KEYWORDS)
 
     @staticmethod
     def _is_recently_active(last_posted_at: str) -> bool:

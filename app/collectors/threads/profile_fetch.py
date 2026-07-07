@@ -7,7 +7,8 @@ from typing import Optional
 
 from app import config
 from app.collectors.common import net
-from app.collectors.threads import cache
+from app.collectors.common.snippet_signals import merge_into_account
+from app.collectors.threads import cache, snippet_estimate
 from app.errors import UpstreamUnavailableError
 from app.models import Account
 
@@ -107,5 +108,15 @@ def fetch_profile(username: str) -> Optional[Account]:
         category="",
         last_posted_at=datetime.now(timezone.utc).isoformat(),
     )
+
+    # 上記の通りThreadsは非ログインでは統計値が一切取れないため、Brave Search
+    # のスニペット解析（app/collectors/threads/snippet_estimate.py）がこの
+    # プラットフォームでは実質的に主要なデータ取得経路になる。スニペットに
+    # 「ページが見つかりません」等の記述があればリンク切れとみなしNoneを返す。
+    signals = snippet_estimate.estimate(username)
+    if signals.not_found:
+        return None
+    account = merge_into_account(account, signals)
+
     cache.set(username, account)
     return account

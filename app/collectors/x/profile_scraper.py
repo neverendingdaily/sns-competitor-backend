@@ -8,6 +8,7 @@ from typing import Optional
 import requests
 
 from app.collectors.common.net import polite_get
+from app.collectors.common.snippet_signals import merge_into_account
 from app.collectors.x import cache, follower_estimate, graphql
 from app.collectors.x.graphql import CookieAuthError
 from app.errors import UpstreamUnavailableError
@@ -60,17 +61,16 @@ def fetch_profile(username: str, session: Optional[requests.Session] = None) -> 
     if account is None:
         return None
 
-    if account.followers == 0 and account.following == 0:
+    if account.followers == 0 or account.following == 0 or account.posts_count == 0:
         # GraphQLがCookie拒否で使えなかった場合や、非認証metaタグ取得しかできな
-        # かった場合、フォロワー数・フォロー数は「取得不可」のセンチネル値として
-        # 常に0で返ってくる（実際に0人のケースと区別が付かない）。Brave Search
-        # のスニペットに数値の記載がないか解析し、推測できれば補完する
-        # （見つからなければ0のまま・フェイルソフト）。
-        estimated = follower_estimate.estimate_counts(username)
-        if estimated is not None:
-            account = account.model_copy(
-                update={"followers": estimated.followers, "following": estimated.following}
-            )
+        # かった場合、フォロワー数・フォロー数・投稿数は「取得不可」のセンチネル値
+        # として0で返ってくることがある（実際に0のケースと区別が付かない）。
+        # Brave Searchのスニペットに数値やリンク切れの記載がないか解析し、
+        # 推測できれば補完する（見つからなければ0のまま・フェイルソフト）。
+        signals = follower_estimate.estimate(username)
+        if signals.not_found:
+            return None
+        account = merge_into_account(account, signals)
 
     cache.set(username, account)
     return account

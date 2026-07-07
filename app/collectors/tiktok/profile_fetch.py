@@ -6,7 +6,8 @@ from urllib.parse import quote
 
 from app import config
 from app.collectors.common import net
-from app.collectors.tiktok import cache
+from app.collectors.common.snippet_signals import merge_into_account
+from app.collectors.tiktok import cache, snippet_estimate
 from app.errors import UpstreamUnavailableError
 from app.models import Account
 
@@ -79,5 +80,15 @@ def fetch_profile(username: str) -> Optional[Account]:
         category="",
         last_posted_at=datetime.now(timezone.utc).isoformat(),
     )
+
+    # oEmbedはfollowers等の統計情報を一切返さないため、Brave Searchのスニペット
+    # 解析（app/collectors/tiktok/snippet_estimate.py）がこのプラットフォームでは
+    # 実質的に主要なデータ取得経路になる。スニペットに「ページが見つかりません」
+    # 等の記述があればリンク切れとみなしNoneを返す。
+    signals = snippet_estimate.estimate(username)
+    if signals.not_found:
+        return None
+    account = merge_into_account(account, signals)
+
     cache.set(username, account)
     return account

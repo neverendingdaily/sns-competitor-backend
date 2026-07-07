@@ -9,6 +9,7 @@ import requests
 
 from app import config
 from app.collectors.base import BaseCollector
+from app.collectors.common.quality_gate import passes_universal_quality_gate
 from app.errors import AccountNotFoundError, UpstreamUnavailableError
 from app.models import Account, SearchParams
 
@@ -32,6 +33,10 @@ class YouTubeCollector(BaseCollector):
             return []
 
         accounts = self._hydrate_channels(channel_ids)
+        # 投稿ゼロ・チャンネル登録者不足等の全プラットフォーム共通の品質ゲート
+        # （`_apply_filters`のユーザー指定条件とは別、常時適用）。YouTubeは
+        # `following`概念が無くhardcoded 0のため、FF比チェックは実質的に無効。
+        accounts = [a for a in accounts if passes_universal_quality_gate(a, min_followers=config.YOUTUBE_MIN_FOLLOWERS)]
         return self._apply_filters(accounts, params)
 
     def get_account(self, account_id: str) -> Account:

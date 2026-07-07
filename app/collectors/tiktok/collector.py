@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from app import config
 from app.collectors.base import BaseCollector
+from app.collectors.common.quality_gate import passes_universal_quality_gate
 from app.collectors.tiktok import discovery, profile_fetch
 from app.errors import AccountNotFoundError, UpstreamUnavailableError
 from app.models import Account, SearchParams
@@ -53,6 +54,9 @@ class TikTokCollector(BaseCollector):
                         pending.cancel()
                     break
 
+        # 投稿ゼロ・フォロワー不足・FF比1.0未満・スパムキーワード等の全プラット
+        # フォーム共通の品質ゲート（`_apply_filters`のユーザー指定条件とは別、常時適用）。
+        accounts = [a for a in accounts if passes_universal_quality_gate(a, min_followers=config.TIKTOK_MIN_FOLLOWERS)]
         return self._apply_filters(accounts, params)
 
     def get_account(self, account_id: str) -> Account:

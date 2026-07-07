@@ -8,6 +8,39 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
 BACKEND_API_KEY = os.getenv("BACKEND_API_KEY", "")
 
+# --- 全プラットフォーム共通の品質ゲート（2026-07-08、app/collectors/common/
+# quality_gate.py・snippet_signals.py参照） ---
+# アフィリエイトのモデリング対象として不適切な、投稿ゼロ・リンク切れ・一般/スパム
+# アカウントを検索結果から一律で除外するための足切り。`filters`によるユーザー指定の
+# 絞り込みとは別に、`search`（一覧検索）の結果へ常時適用する。
+#
+# フォロワー数がこの値未満のアカウントは除外する（プラットフォームごとに独立して調整可能）。
+X_MIN_FOLLOWERS = int(os.getenv("X_MIN_FOLLOWERS", "100"))
+INSTAGRAM_MIN_FOLLOWERS = int(os.getenv("INSTAGRAM_MIN_FOLLOWERS", "100"))
+THREADS_MIN_FOLLOWERS = int(os.getenv("THREADS_MIN_FOLLOWERS", "100"))
+TIKTOK_MIN_FOLLOWERS = int(os.getenv("TIKTOK_MIN_FOLLOWERS", "100"))
+YOUTUBE_MIN_FOLLOWERS = int(os.getenv("YOUTUBE_MIN_FOLLOWERS", "100"))
+
+# API等から直接データが取得できずfollowers/following/postsCountのいずれかが0のまま
+# だった場合のみ、Brave Search APIの検索結果スニペット（title/description）から
+# 数値やリンク切れの文言を推測・抽出するフォールバックを試みる
+# （app/collectors/common/snippet_signals.py、各プラットフォームの
+# `<platform>/snippet_estimate.py`が薄いラッパーとして呼び出す）。
+# BRAVE_SEARCH_API_KEY未設定なら自動的に無効（フェイルソフト）。discovery用の
+# Brave呼び出し（bucket=ホスト名）とは別バケットにして、他プラットフォームの
+# discoveryと待ち時間を奪い合わないようにしている。
+# 旧`X_FOLLOWER_ESTIMATE_*`（X専用実装時の変数名）が設定されていればそれを
+# 後方互換のフォールバック値として使う。
+SNIPPET_ESTIMATE_JITTER_MIN = float(
+    os.getenv("SNIPPET_ESTIMATE_JITTER_MIN", os.getenv("X_FOLLOWER_ESTIMATE_JITTER_MIN", "1.0"))
+)
+SNIPPET_ESTIMATE_JITTER_MAX = float(
+    os.getenv("SNIPPET_ESTIMATE_JITTER_MAX", os.getenv("X_FOLLOWER_ESTIMATE_JITTER_MAX", "2.0"))
+)
+SNIPPET_ESTIMATE_CONCURRENCY = int(
+    os.getenv("SNIPPET_ESTIMATE_CONCURRENCY", os.getenv("X_FOLLOWER_ESTIMATE_CONCURRENCY", "3"))
+)
+
 # 後方互換のため残す旧設定（新規環境変数が未設定の場合のフォールバック値として使う）
 X_SEARCH_MAX_CANDIDATES = int(os.getenv("X_SEARCH_MAX_CANDIDATES", "3"))
 X_REQUEST_JITTER_MIN = float(os.getenv("X_REQUEST_JITTER_MIN", "4"))
@@ -58,22 +91,12 @@ X_ENGAGEMENT_RECENT_POSTS = int(os.getenv("X_ENGAGEMENT_RECENT_POSTS", "5"))
 X_ENGAGEMENT_INCLUDE_QUOTES = os.getenv("X_ENGAGEMENT_INCLUDE_QUOTES", "true").strip().lower() == "true"
 
 # --- Xの品質フィルタ（アフィリエイトのモデリングに適さないスパム/放置アカウントの足切り） ---
-# フォロワー数がこの値未満のアカウントは除外する
-X_MIN_FOLLOWERS = int(os.getenv("X_MIN_FOLLOWERS", "100"))
-# 最終投稿からこの日数を超えて経過している（=放置されている）アカウントは除外する
+# フォロワー数の下限（X_MIN_FOLLOWERS）は上部「全プラットフォーム共通の品質ゲート」に移動済み。
+# 最終投稿からこの日数を超えて経過している（=放置されている）アカウントは除外する（X固有）
 X_MAX_INACTIVE_DAYS = int(os.getenv("X_MAX_INACTIVE_DAYS", "180"))
 
 # プロフィール取得結果のキャッシュ有効期限（秒）
 X_PROFILE_CACHE_TTL = int(os.getenv("X_PROFILE_CACHE_TTL", "3600"))
-
-# GraphQL/metaタグでフォロワー数・フォロー数が取得できなかった(0のまま)場合のみ、
-# Brave Search APIのスニペットからの数値推測フォールバックを試みる
-# （app/collectors/x/follower_estimate.py）。BRAVE_SEARCH_API_KEY未設定なら自動的に
-# 無効（フェイルソフト）。discovery用のBrave呼び出し（bucket=ホスト名）とは別バケット
-# にして、他プラットフォームのdiscoveryと待ち時間を奪い合わないようにしている。
-X_FOLLOWER_ESTIMATE_JITTER_MIN = float(os.getenv("X_FOLLOWER_ESTIMATE_JITTER_MIN", "1.0"))
-X_FOLLOWER_ESTIMATE_JITTER_MAX = float(os.getenv("X_FOLLOWER_ESTIMATE_JITTER_MAX", "2.0"))
-X_FOLLOWER_ESTIMATE_CONCURRENCY = int(os.getenv("X_FOLLOWER_ESTIMATE_CONCURRENCY", "3"))
 
 # --- TikTok ---
 # 実サイト確認済み(2026-07時点): プロフィールページはWAFチャレンジで保護されており

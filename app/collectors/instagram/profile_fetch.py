@@ -9,7 +9,8 @@ import requests
 
 from app import config
 from app.collectors.common import net
-from app.collectors.instagram import cache
+from app.collectors.common.snippet_signals import merge_into_account
+from app.collectors.instagram import cache, snippet_estimate
 from app.errors import UpstreamUnavailableError
 from app.models import Account
 
@@ -76,23 +77,35 @@ def fetch_profile(username: str, session: Optional[requests.Session] = None) -> 
     if cached is not None:
         return cached
 
+    account = _fetch_raw_profile(username, session)
+    if account is None:
+        return None
+
+    if account.followers == 0 or account.following == 0 or account.posts_count == 0:
+        # web_profile_infoは通常フルの実データを返すため稀なケースだが、
+        # 非公開アカウントやレート制限等で一部が0のまま返ってきた場合、
+        # Brave Searchのスニペットから推測できないか試みる（見つからなければ
+        # 0のまま・フェイルソフト）。
+        signals = snippet_estimate.estimate(username)
+        if signals.not_found:
+            return None
+        account = merge_into_account(account, signals)
+
+    cache.set(username, account)
+    return account
+
+
+def _fetch_raw_profile(username: str, session: Optional[requests.Session]) -> Optional[Account]:
     if session is not None:
         try:
-            account = _fetch_web_profile_info(username, session=session)
+            return _fetch_web_profile_info(username, session=session)
         except _CookieAuthError:
             logger.warning(
                 "Instagramのcookieが拒否されました。非認証モードにフォールバックします。"
                 "INSTAGRAM_COOKIES_PATHの更新（再ログイン＋再エクスポート）とバックエンド再起動が必要です"
             )
-        else:
-            if account is not None:
-                cache.set(username, account)
-            return account
 
-    account = _fetch_web_profile_info(username, session=None)
-    if account is not None:
-        cache.set(username, account)
-    return account
+    return _fetch_web_profile_info(username, session=None)
 
 
 def _fetch_web_profile_info(username: str, session: Optional[requests.Session]) -> Optional[Account]:
