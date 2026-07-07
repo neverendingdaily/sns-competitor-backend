@@ -21,6 +21,32 @@ THREADS_MIN_FOLLOWERS = int(os.getenv("THREADS_MIN_FOLLOWERS", "100"))
 TIKTOK_MIN_FOLLOWERS = int(os.getenv("TIKTOK_MIN_FOLLOWERS", "100"))
 YOUTUBE_MIN_FOLLOWERS = int(os.getenv("YOUTUBE_MIN_FOLLOWERS", "100"))
 
+# FF比（フォロワー数÷フォロー数）の下限（プラットフォームごとに独立して調整可能）。
+# 2026-07-08「モデリング対象アカウントの選定基準」対応で追加。X/Threadsは既定値から
+# 引き上げ、フォロワーより「熱量の高い固定ファン」を重視する設計にしている
+# （詳細はREADME「モデリング対象の選定基準」参照）。YouTubeは`following`概念が無く
+# 常に0のためこのチェックは実質的に無効。
+X_MIN_FF_RATIO = float(os.getenv("X_MIN_FF_RATIO", "5.0"))
+THREADS_MIN_FF_RATIO = float(os.getenv("THREADS_MIN_FF_RATIO", "3.0"))
+INSTAGRAM_MIN_FF_RATIO = float(os.getenv("INSTAGRAM_MIN_FF_RATIO", "1.0"))
+TIKTOK_MIN_FF_RATIO = float(os.getenv("TIKTOK_MIN_FF_RATIO", "1.0"))
+YOUTUBE_MIN_FF_RATIO = float(os.getenv("YOUTUBE_MIN_FF_RATIO", "1.0"))
+
+# YouTube固有: 直近動画（ショート除く）の平均再生数がチャンネル登録者数に対して
+# この比率（既定0.2＝20%）未満のチャンネルは除外する（「登録者数と再生数の
+# バランスが取れている」＝モデリング対象として再現性があるアカウントの選定基準。
+# 2026-07-08追加、詳細はREADME参照）。
+YOUTUBE_MIN_VIEW_SUBSCRIBER_RATIO = float(os.getenv("YOUTUBE_MIN_VIEW_SUBSCRIBER_RATIO", "0.2"))
+# ショート判定の近似閾値（秒）。この値以下の動画尺はショートとみなし、上記の
+# 再生数/登録者数比率・engagement_rateの算出対象から除外する。
+YOUTUBE_SHORTS_MAX_DURATION_SECONDS = int(os.getenv("YOUTUBE_SHORTS_MAX_DURATION_SECONDS", "60"))
+# ショート除外後に十分な母数の「通常動画」を確保するため、直近アップロードを
+# 何件までスキャンするか（既定20件）。
+YOUTUBE_RECENT_VIDEOS_SCAN = int(os.getenv("YOUTUBE_RECENT_VIDEOS_SCAN", "20"))
+# 上記スキャン後、実際にengagement_rate・平均再生数の算出に使う通常動画の件数
+# （既定5件、Xの`X_ENGAGEMENT_RECENT_POSTS`と同じ位置づけ）。
+YOUTUBE_ENGAGEMENT_RECENT_POSTS = int(os.getenv("YOUTUBE_ENGAGEMENT_RECENT_POSTS", "5"))
+
 # API等から直接データが取得できずfollowers/following/postsCountのいずれかが0のまま
 # だった場合のみ、Brave Search APIの検索結果スニペット（title/description）から
 # 数値やリンク切れの文言を推測・抽出するフォールバックを試みる
@@ -89,6 +115,10 @@ X_GRAPHQL_USERTWEETS_ID = os.getenv("X_GRAPHQL_USERTWEETS_ID", "")
 X_ENGAGEMENT_RECENT_POSTS = int(os.getenv("X_ENGAGEMENT_RECENT_POSTS", "5"))
 # 引用ツイート(quote_count)をエンゲージメント数に含めるか
 X_ENGAGEMENT_INCLUDE_QUOTES = os.getenv("X_ENGAGEMENT_INCLUDE_QUOTES", "true").strip().lower() == "true"
+# ブックマーク数(bookmark_count)をエンゲージメント数に含めるか。「いいねだけでなく
+# リプライ・リポスト・ブックマークが定期的についている」（モデリング基準）を
+# engagement_rateへ反映するため2026-07-08追加。
+X_ENGAGEMENT_INCLUDE_BOOKMARKS = os.getenv("X_ENGAGEMENT_INCLUDE_BOOKMARKS", "true").strip().lower() == "true"
 
 # --- Xの品質フィルタ（アフィリエイトのモデリングに適さないスパム/放置アカウントの足切り） ---
 # フォロワー数の下限（X_MIN_FOLLOWERS）は上部「全プラットフォーム共通の品質ゲート」に移動済み。

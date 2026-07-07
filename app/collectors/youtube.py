@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Optional
@@ -18,6 +19,22 @@ logger = logging.getLogger(__name__)
 API_BASE = "https://www.googleapis.com/youtube/v3"
 MAX_SEARCH_CANDIDATES = 15
 
+_ISO8601_DURATION_RE = re.compile(
+    r"^P(?:(?P<days>\d+)D)?T(?:(?P<hours>\d+)H)?(?:(?P<minutes>\d+)M)?(?:(?P<seconds>\d+)S)?$"
+)
+
+
+def _parse_iso8601_duration_seconds(duration: str) -> int:
+    match = _ISO8601_DURATION_RE.match(duration or "")
+    if not match:
+        return 0
+    parts = match.groupdict()
+    days = int(parts["days"] or 0)
+    hours = int(parts["hours"] or 0)
+    minutes = int(parts["minutes"] or 0)
+    seconds = int(parts["seconds"] or 0)
+    return days * 86400 + hours * 3600 + minutes * 60 + seconds
+
 
 class YouTubeCollector(BaseCollector):
     platform = "youtube"
@@ -32,18 +49,37 @@ class YouTubeCollector(BaseCollector):
         if not channel_ids:
             return []
 
-        accounts = self._hydrate_channels(channel_ids)
+        hydrated = self._hydrate_channels(channel_ids)
         # 投稿ゼロ・チャンネル登録者不足等の全プラットフォーム共通の品質ゲート
         # （`_apply_filters`のユーザー指定条件とは別、常時適用）。YouTubeは
         # `following`概念が無くhardcoded 0のため、FF比チェックは実質的に無効。
-        accounts = [a for a in accounts if passes_universal_quality_gate(a, min_followers=config.YOUTUBE_MIN_FOLLOWERS)]
+        # さらにYouTube固有として、直近の通常動画（ショート除く）の平均再生数が
+        # 登録者数に対して一定比率未満のチャンネルも除外する（モデリング基準）。
+        accounts = [
+            account
+            for account, avg_views in hydrated
+            if passes_universal_quality_gate(
+                account, min_followers=config.YOUTUBE_MIN_FOLLOWERS, min_ff_ratio=config.YOUTUBE_MIN_FF_RATIO
+            )
+            and self._passes_view_subscriber_ratio(account, avg_views)
+        ]
         return self._apply_filters(accounts, params)
 
     def get_account(self, account_id: str) -> Account:
-        accounts = self._hydrate_channels([account_id])
-        if not accounts:
+        hydrated = self._hydrate_channels([account_id])
+        if not hydrated:
             raise AccountNotFoundError(f"youtube channel '{account_id}' not found")
-        return accounts[0]
+        return hydrated[0][0]
+
+    @staticmethod
+    def _passes_view_subscriber_ratio(account: Account, avg_views: float) -> bool:
+        # フォロワー数（登録者数）自体が品質ゲートで既に判定されているため、
+        # ここでは比率のみを見る。登録者数0（品質ゲートで別途除外される想定）で
+        # ゼロ除算しないようガードする。
+        if account.followers <= 0:
+            return True
+        ratio = avg_views / account.followers
+        return ratio >= config.YOUTUBE_MIN_VIEW_SUBSCRIBER_RATIO
 
     # -- discovery ---------------------------------------------------
 
@@ -83,7 +119,7 @@ class YouTubeCollector(BaseCollector):
 
     # -- hydration -----------------------------------------------------
 
-    def _hydrate_channels(self, channel_ids: list[str]) -> list[Account]:
+    def _hydrate_channels(self, channel_ids: list[str]) -> list[tuple[Account, float]]:
         channels_by_id: dict[str, dict] = {}
         for batch_start in range(0, len(channel_ids), 50):
             batch = channel_ids[batch_start: batch_start + 50]
@@ -94,31 +130,31 @@ class YouTubeCollector(BaseCollector):
             for item in data.get("items", []):
                 channels_by_id[item["id"]] = item
 
-        accounts: list[Account] = []
+        results: list[tuple[Account, float]] = []
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = {
                 executor.submit(self._build_account, channel_id, channel): channel_id
                 for channel_id, channel in channels_by_id.items()
             }
             for future in as_completed(futures):
-                account = future.result()
-                if account is not None:
-                    accounts.append(account)
-        return accounts
+                result = future.result()
+                if result is not None:
+                    results.append(result)
+        return results
 
-    def _build_account(self, channel_id: str, channel: dict) -> Optional[Account]:
+    def _build_account(self, channel_id: str, channel: dict) -> Optional[tuple[Account, float]]:
         try:
             snippet = channel.get("snippet", {})
             statistics = channel.get("statistics", {})
             content_details = channel.get("contentDetails", {})
             uploads_playlist_id = content_details.get("relatedPlaylists", {}).get("uploads")
 
-            last_posted_at, engagement_rate = self._recent_activity(uploads_playlist_id, statistics)
+            last_posted_at, engagement_rate, avg_views = self._recent_activity(uploads_playlist_id, statistics)
 
             custom_url = snippet.get("customUrl", "")
             username = custom_url.lstrip("@") if custom_url else channel_id
 
-            return Account(
+            account = Account(
                 id=channel_id,
                 platform="youtube",
                 username=username,
@@ -134,23 +170,35 @@ class YouTubeCollector(BaseCollector):
                 category="",
                 last_posted_at=last_posted_at,
             )
+            return account, avg_views
         except Exception:
             logger.exception("failed to build account for channel %s", channel_id)
             return None
 
-    def _recent_activity(self, uploads_playlist_id: Optional[str], statistics: dict) -> tuple[str, float]:
+    def _recent_activity(self, uploads_playlist_id: Optional[str], statistics: dict) -> tuple[str, float, float]:
+        """直近動画の(最終投稿日時, engagement_rate, 平均再生数)を返す。
+
+        engagement_rate・平均再生数の算出対象は、ショート動画を除いた「通常動画」に
+        限定する（モデリング基準「直近の通常動画（ショート除く）」対応）。YouTube
+        Data APIにショート専用フラグは無いため、`contentDetails.duration`が
+        `YOUTUBE_SHORTS_MAX_DURATION_SECONDS`（既定60秒）以下の動画をショートの
+        近似シグナルとして除外する。通常動画が1本も見つからない場合はこの判定を
+        諦め、全動画にフォールバックする（ショート専業チャンネルを一律除外しない
+        ためのフェイルソフト）。最終投稿日時は（ショートも含めた）実際の直近投稿を
+        反映させるため、フィルタ前の全件から算出する。
+        """
         default_last_posted = datetime.now(timezone.utc).isoformat()
         if not uploads_playlist_id:
-            return default_last_posted, 0.0
+            return default_last_posted, 0.0, 0.0
 
         try:
             playlist_data = self._get("/playlistItems", {
                 "part": "contentDetails",
                 "playlistId": uploads_playlist_id,
-                "maxResults": 5,
+                "maxResults": config.YOUTUBE_RECENT_VIDEOS_SCAN,
             })
         except UpstreamUnavailableError:
-            return default_last_posted, 0.0
+            return default_last_posted, 0.0, 0.0
 
         video_ids = [
             item["contentDetails"]["videoId"]
@@ -158,35 +206,43 @@ class YouTubeCollector(BaseCollector):
             if "videoId" in item.get("contentDetails", {})
         ]
         if not video_ids:
-            return default_last_posted, 0.0
+            return default_last_posted, 0.0, 0.0
 
         try:
             videos_data = self._get("/videos", {
-                "part": "snippet,statistics",
+                "part": "snippet,statistics,contentDetails",
                 "id": ",".join(video_ids),
             })
         except UpstreamUnavailableError:
-            return default_last_posted, 0.0
+            return default_last_posted, 0.0, 0.0
 
-        items = videos_data.get("items", [])
-        if not items:
-            return default_last_posted, 0.0
+        all_items = videos_data.get("items", [])
+        if not all_items:
+            return default_last_posted, 0.0, 0.0
 
         last_posted_at = max(
-            (item["snippet"]["publishedAt"] for item in items if "publishedAt" in item.get("snippet", {})),
+            (item["snippet"]["publishedAt"] for item in all_items if "publishedAt" in item.get("snippet", {})),
             default=default_last_posted,
         )
 
-        views = sum(int(item.get("statistics", {}).get("viewCount", 0) or 0) for item in items)
+        regular_items = [
+            item for item in all_items
+            if _parse_iso8601_duration_seconds(item.get("contentDetails", {}).get("duration", ""))
+            > config.YOUTUBE_SHORTS_MAX_DURATION_SECONDS
+        ]
+        sample = (regular_items or all_items)[: config.YOUTUBE_ENGAGEMENT_RECENT_POSTS]
+
+        views = sum(int(item.get("statistics", {}).get("viewCount", 0) or 0) for item in sample)
         interactions = sum(
             int(item.get("statistics", {}).get("likeCount", 0) or 0)
             + int(item.get("statistics", {}).get("commentCount", 0) or 0)
-            for item in items
+            for item in sample
         )
 
         # 直近動画からの近似値であり、YouTube公式のエンゲージメント指標ではない
         engagement_rate = round((interactions / views) * 100, 2) if views else 0.0
-        return last_posted_at, engagement_rate
+        avg_views = views / len(sample) if sample else 0.0
+        return last_posted_at, engagement_rate, avg_views
 
     # -- filters ---------------------------------------------------------
 

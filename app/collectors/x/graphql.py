@@ -292,6 +292,10 @@ def fetch_recent_tweets(rest_id: str, followers: int, session: requests.Session)
         interactions += int(legacy.get("reply_count", 0))
         if config.X_ENGAGEMENT_INCLUDE_QUOTES:
             interactions += int(legacy.get("quote_count", 0))
+        if config.X_ENGAGEMENT_INCLUDE_BOOKMARKS:
+            # 「いいねだけでなくリプライ・リポスト・ブックマークが定期的について
+            # いる」（モデリング基準）をengagement_rateへ反映するため2026-07-08追加。
+            interactions += int(legacy.get("bookmark_count", 0))
 
         created_at = _parse_x_created_at(legacy.get("created_at", ""))
         if created_at and (newest_created_at is None or created_at > newest_created_at):

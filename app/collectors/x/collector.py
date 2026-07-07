@@ -126,7 +126,9 @@ class XCollector(BaseCollector):
     def _is_quality_account(self, account: Account) -> bool:
         # 投稿数0・フォロワー数不足・FF比1.0未満・スパムキーワードは全プラット
         # フォーム共通の判定（app/collectors/common/quality_gate.py）。
-        if not passes_universal_quality_gate(account, min_followers=config.X_MIN_FOLLOWERS):
+        if not passes_universal_quality_gate(
+            account, min_followers=config.X_MIN_FOLLOWERS, min_ff_ratio=config.X_MIN_FF_RATIO
+        ):
             return False
         if not account.bio.strip():
             # プロフィール自己紹介が空＝プロフィールの充実度が低いスパム/放置アカウントの

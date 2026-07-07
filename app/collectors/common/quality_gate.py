@@ -18,7 +18,7 @@ def has_spam_signal(bio: str, keywords: tuple[str, ...] = DEFAULT_SPAM_KEYWORDS)
     return any(keyword.lower() in lowered for keyword in keywords)
 
 
-def passes_universal_quality_gate(account: Account, *, min_followers: int) -> bool:
+def passes_universal_quality_gate(account: Account, *, min_followers: int, min_ff_ratio: float = 1.0) -> bool:
     """全プラットフォーム（X/Threads/Instagram/TikTok/YouTube）共通の品質ゲート。
     アフィリエイトのモデリング対象として不適切な、投稿ゼロ・一般/スパムアカウントを
     除外する目的で、以下のいずれか1つでも該当すればFalse（除外）を返す。
@@ -29,10 +29,11 @@ def passes_universal_quality_gate(account: Account, *, min_followers: int) -> bo
       だった場合もこの条件に該当し除外される**（2026-07-08の改修より前は
       「0＝取得不可のセンチネル値」として下限チェックの対象外にしていたが、
       「取得失敗＝無価値なアカウントとみなす」方向へ意図的に厳格化した）
-    - FF比（フォロワー数÷フォロー数）が1.0未満（フォロワー数・フォロー数の
-      両方が0より大きい値として取得・推測できている場合のみ判定する。
-      フォローバック狙いで大量フォローしている一般・スパムアカウントの典型的な
-      シグナル）
+    - FF比（フォロワー数÷フォロー数）が`min_ff_ratio`未満（フォロワー数・フォロー数の
+      両方が0より大きい値として取得・推測できている場合のみ判定する）。既定値1.0は
+      「フォロワー＜フォロー」のフォローバック狙いアカウントの足切り。プラットフォーム
+      によってはモデリング対象の質を上げるためより高い閾値を渡す
+      （例: X=5.0、Threads=3.0。2026-07-08「モデリング基準」対応で追加）
     - 自己紹介文に典型的なスパムキーワードが含まれる
 
     リンク切れ（HTTP異常・スニペットからの「ページが見つかりません」等の検知）は
@@ -43,7 +44,7 @@ def passes_universal_quality_gate(account: Account, *, min_followers: int) -> bo
         return False
     if account.followers < min_followers:
         return False
-    if account.followers > 0 and account.following > 0 and account.followers < account.following:
+    if account.followers > 0 and account.following > 0 and account.followers < min_ff_ratio * account.following:
         return False
     if has_spam_signal(account.bio):
         return False
