@@ -53,15 +53,18 @@ class YouTubeCollector(BaseCollector):
         # 投稿ゼロ・チャンネル登録者不足等の全プラットフォーム共通の品質ゲート
         # （`_apply_filters`のユーザー指定条件とは別、常時適用）。YouTubeは
         # `following`概念が無くhardcoded 0のため、FF比チェックは実質的に無効。
-        # さらにYouTube固有として、直近の通常動画（ショート除く）の平均再生数が
-        # 登録者数に対して一定比率未満のチャンネルも除外する（モデリング基準）。
+        # さらにYouTube固有として、(1)直近の通常動画（ショート除く）の平均再生数が
+        # 登録者数に対して一定比率未満のチャンネル、(2)生涯累計の総視聴回数が
+        # 登録者数に対して極端に少ない「登録者数だけ多くて実際には見られていない
+        # 死にチャンネル」も除外する（モデリング基準）。
         accounts = [
             account
-            for account, avg_views in hydrated
+            for account, avg_views, total_views in hydrated
             if passes_universal_quality_gate(
                 account, min_followers=config.YOUTUBE_MIN_FOLLOWERS, min_ff_ratio=config.YOUTUBE_MIN_FF_RATIO
             )
             and self._passes_view_subscriber_ratio(account, avg_views)
+            and self._passes_total_views_sanity(account, total_views)
         ]
         return self._apply_filters(accounts, params)
 
@@ -80,6 +83,15 @@ class YouTubeCollector(BaseCollector):
             return True
         ratio = avg_views / account.followers
         return ratio >= config.YOUTUBE_MIN_VIEW_SUBSCRIBER_RATIO
+
+    @staticmethod
+    def _passes_total_views_sanity(account: Account, total_views: int) -> bool:
+        # 生涯累計の総視聴回数(statistics.viewCount)が登録者数の一定倍未満なら
+        # 「登録者数だけ多くて実際には見られていない死にチャンネル」とみなし除外する。
+        if account.followers <= 0:
+            return True
+        ratio = total_views / account.followers
+        return ratio >= config.YOUTUBE_MIN_TOTAL_VIEWS_PER_SUBSCRIBER
 
     # -- discovery ---------------------------------------------------
 
@@ -119,7 +131,7 @@ class YouTubeCollector(BaseCollector):
 
     # -- hydration -----------------------------------------------------
 
-    def _hydrate_channels(self, channel_ids: list[str]) -> list[tuple[Account, float]]:
+    def _hydrate_channels(self, channel_ids: list[str]) -> list[tuple[Account, float, int]]:
         channels_by_id: dict[str, dict] = {}
         for batch_start in range(0, len(channel_ids), 50):
             batch = channel_ids[batch_start: batch_start + 50]
@@ -130,7 +142,7 @@ class YouTubeCollector(BaseCollector):
             for item in data.get("items", []):
                 channels_by_id[item["id"]] = item
 
-        results: list[tuple[Account, float]] = []
+        results: list[tuple[Account, float, int]] = []
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = {
                 executor.submit(self._build_account, channel_id, channel): channel_id
@@ -142,7 +154,7 @@ class YouTubeCollector(BaseCollector):
                     results.append(result)
         return results
 
-    def _build_account(self, channel_id: str, channel: dict) -> Optional[tuple[Account, float]]:
+    def _build_account(self, channel_id: str, channel: dict) -> Optional[tuple[Account, float, int]]:
         try:
             snippet = channel.get("snippet", {})
             statistics = channel.get("statistics", {})
@@ -150,6 +162,9 @@ class YouTubeCollector(BaseCollector):
             uploads_playlist_id = content_details.get("relatedPlaylists", {}).get("uploads")
 
             last_posted_at, engagement_rate, avg_views = self._recent_activity(uploads_playlist_id, statistics)
+            # チャンネルの生涯累計の総視聴回数。直近動画の平均再生数(avg_views)とは
+            # 別の「死にチャンネル」検知シグナルとして使う（search()参照）。
+            total_views = int(statistics.get("viewCount", 0) or 0)
 
             custom_url = snippet.get("customUrl", "")
             username = custom_url.lstrip("@") if custom_url else channel_id
@@ -170,7 +185,7 @@ class YouTubeCollector(BaseCollector):
                 category="",
                 last_posted_at=last_posted_at,
             )
-            return account, avg_views
+            return account, avg_views, total_views
         except Exception:
             logger.exception("failed to build account for channel %s", channel_id)
             return None

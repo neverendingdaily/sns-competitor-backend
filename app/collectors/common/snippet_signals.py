@@ -29,6 +29,11 @@ FOLLOWING_LABELS = ("Following", "フォロー中", "フォロー")
 # プラットフォームによって「投稿」の呼び方が異なる（X=Posts、Threads=threads、
 # TikTok/YouTube=videos、Instagram=posts）ため主要な表記をまとめて扱う。
 POST_LABELS = ("Posts", "posts", "Threads", "threads", "Videos", "videos", "投稿", "スレッド", "動画")
+# TikTokの本人プロフィールページのスニペットには総いいね数(Likes)が含まれる
+# ことが多い（動画数は含まれないことが多い一方でLikesは比較的安定して観測できる、
+# 実機確認済み2026-07-08）。「フォロワーに対していいね数が極端に少ない」アカウントの
+# 足切り（app/collectors/tiktok/collector.py）に使う。
+LIKES_LABELS = ("Likes", "likes", "いいね")
 
 # リンク切れ（削除済み・非公開・存在しないアカウント）を示す典型的な文言。
 # HTTPステータスで判別できないプラットフォーム（Threads等）向けの補助シグナル。
@@ -46,6 +51,7 @@ class SnippetSignals:
     followers: Optional[int] = None
     following: Optional[int] = None
     posts: Optional[int] = None
+    likes: Optional[int] = None
     not_found: bool = False
 
 
@@ -76,6 +82,7 @@ def _build_label_pattern(labels: tuple[str, ...]) -> "re.Pattern[str]":
 _FOLLOWERS_RE = _build_label_pattern(FOLLOWER_LABELS)
 _FOLLOWING_RE = _build_label_pattern(FOLLOWING_LABELS)
 _POSTS_RE = _build_label_pattern(POST_LABELS)
+_LIKES_RE = _build_label_pattern(LIKES_LABELS)
 
 
 def _extract_number(text: str, pattern: "re.Pattern[str]") -> Optional[int]:
@@ -142,6 +149,7 @@ def fetch_snippet_signals(
     followers: Optional[int] = None
     following: Optional[int] = None
     posts: Optional[int] = None
+    likes: Optional[int] = None
     not_found = False
 
     for item in items:
@@ -164,11 +172,15 @@ def fetch_snippet_signals(
             following = _extract_number(text, _FOLLOWING_RE)
         if posts is None:
             posts = _extract_number(text, _POSTS_RE)
+        if likes is None:
+            likes = _extract_number(text, _LIKES_RE)
 
-        if not_found or (followers is not None and following is not None and posts is not None):
+        if not_found or (
+            followers is not None and following is not None and posts is not None and likes is not None
+        ):
             break
 
-    return SnippetSignals(followers=followers, following=following, posts=posts, not_found=not_found)
+    return SnippetSignals(followers=followers, following=following, posts=posts, likes=likes, not_found=not_found)
 
 
 def merge_into_account(account: Account, signals: SnippetSignals) -> Account:

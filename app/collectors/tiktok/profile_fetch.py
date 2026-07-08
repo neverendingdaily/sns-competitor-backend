@@ -31,10 +31,15 @@ BUCKET = "tiktok.com"
 # 未実装（README「今後の拡張」参照）。
 
 
-def fetch_profile(username: str) -> Optional[Account]:
+def fetch_profile(username: str) -> Optional[tuple[Account, Optional[int]]]:
     """usernameのプロフィールを取得する。存在しない場合はNone、接続不能な場合は
     例外を送出する。oEmbed経由のため取得できるのは表示名・存在確認のみで、
     followers等の統計情報は0/空のまま返す（README既知の制約参照）。
+
+    戻り値は`(Account, 推測できた総いいね数(推測不可ならNone))`のタプル
+    （`app/collectors/tiktok/collector.py`のいいね数÷フォロワー数の足切りで使う。
+    YouTube収集の平均再生数と同じ「Account本体のスキーマは汚さず、フィルタ用の
+    追加シグナルを別途返す」パターン）。
     """
     cached = cache.get(username)
     if cached is not None:
@@ -90,5 +95,6 @@ def fetch_profile(username: str) -> Optional[Account]:
         return None
     account = merge_into_account(account, signals)
 
-    cache.set(username, account)
-    return account
+    result = (account, signals.likes)
+    cache.set(username, account, signals.likes)
+    return result

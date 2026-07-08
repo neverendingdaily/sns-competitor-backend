@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Optional
 
 from app import config
 from app.collectors.base import BaseCollector
@@ -33,7 +34,7 @@ class TikTokCollector(BaseCollector):
         if not candidates:
             return []
 
-        accounts: list[Account] = []
+        hydrated: list[tuple[Account, Optional[int]]] = []
         with ThreadPoolExecutor(max_workers=config.TIKTOK_HYDRATE_CONCURRENCY) as executor:
             futures = {
                 executor.submit(profile_fetch.fetch_profile, username): username for username in candidates
@@ -41,34 +42,49 @@ class TikTokCollector(BaseCollector):
             for future in as_completed(futures):
                 username = futures[future]
                 try:
-                    account = future.result()
+                    result = future.result()
                 except UpstreamUnavailableError:
                     logger.warning("skipping candidate %s: tiktok.com unreachable", username)
                     continue
 
-                if account is not None:
-                    accounts.append(account)
+                if result is not None:
+                    hydrated.append(result)
 
-                if len(accounts) >= config.TIKTOK_SEARCH_TARGET_COUNT:
+                if len(hydrated) >= config.TIKTOK_SEARCH_TARGET_COUNT:
                     for pending in futures:
                         pending.cancel()
                     break
 
         # 投稿ゼロ・フォロワー不足・FF比1.0未満・スパムキーワード等の全プラット
         # フォーム共通の品質ゲート（`_apply_filters`のユーザー指定条件とは別、常時適用）。
+        # さらにTikTok固有として、Brave推測で総いいね数が取得できた場合に限り
+        # 「フォロワーに対していいねが極端に少ない」アカウントも除外する。
         accounts = [
-            a
-            for a in accounts
+            account
+            for account, likes in hydrated
             if passes_universal_quality_gate(
-                a, min_followers=config.TIKTOK_MIN_FOLLOWERS, min_ff_ratio=config.TIKTOK_MIN_FF_RATIO
+                account, min_followers=config.TIKTOK_MIN_FOLLOWERS, min_ff_ratio=config.TIKTOK_MIN_FF_RATIO
             )
+            and self._passes_likes_ratio(account, likes)
         ]
         return self._apply_filters(accounts, params)
 
+    @staticmethod
+    def _passes_likes_ratio(account: Account, likes: Optional[int]) -> bool:
+        # 総いいね数が推測できなかった場合はこのチェック自体をスキップし、
+        # フォロワー数・FF比・投稿数のみで判定する（フェイルソフト）。
+        if likes is None:
+            return True
+        if account.followers <= 0:
+            return True
+        ratio = likes / account.followers
+        return ratio >= config.TIKTOK_MIN_LIKES_FOLLOWER_RATIO
+
     def get_account(self, account_id: str) -> Account:
-        account = profile_fetch.fetch_profile(account_id)
-        if account is None:
+        result = profile_fetch.fetch_profile(account_id)
+        if result is None:
             raise AccountNotFoundError(f"tiktok account '{account_id}' not found")
+        account, _likes = result
         return account
 
     def _apply_filters(self, accounts: list[Account], params: SearchParams) -> list[Account]:

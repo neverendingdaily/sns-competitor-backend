@@ -28,9 +28,23 @@ YOUTUBE_MIN_FOLLOWERS = int(os.getenv("YOUTUBE_MIN_FOLLOWERS", "100"))
 # 常に0のためこのチェックは実質的に無効。
 X_MIN_FF_RATIO = float(os.getenv("X_MIN_FF_RATIO", "5.0"))
 THREADS_MIN_FF_RATIO = float(os.getenv("THREADS_MIN_FF_RATIO", "3.0"))
-INSTAGRAM_MIN_FF_RATIO = float(os.getenv("INSTAGRAM_MIN_FF_RATIO", "1.0"))
+# 2026-07-08「品質ゲートの厳格化」対応でInstagramも1.0→1.5へ引き上げ
+# （相互フォロー等で無理に伸ばした一般アカウントを弾く水準）。
+INSTAGRAM_MIN_FF_RATIO = float(os.getenv("INSTAGRAM_MIN_FF_RATIO", "1.5"))
 TIKTOK_MIN_FF_RATIO = float(os.getenv("TIKTOK_MIN_FF_RATIO", "1.0"))
 YOUTUBE_MIN_FF_RATIO = float(os.getenv("YOUTUBE_MIN_FF_RATIO", "1.0"))
+
+# TikTok固有: Brave Searchスニペットから総いいね数(Likes)が推測できた場合のみ、
+# 総いいね数÷フォロワー数がこの値未満のアカウントを「フォロワーに対していいねが
+# 極端に少ない」（フォロワー買い・放置等の疑いがある）ノイズとみなし除外する。
+# 推測できない場合はこのチェックをスキップし、フォロワー数・FF比・投稿数のみで
+# 判定する（2026-07-08「品質ゲートの厳格化」対応で追加）。
+TIKTOK_MIN_LIKES_FOLLOWER_RATIO = float(os.getenv("TIKTOK_MIN_LIKES_FOLLOWER_RATIO", "1.0"))
+
+# YouTube固有: チャンネルの総視聴回数（生涯累計、statistics.viewCount）が
+# 登録者数のこの倍率未満の場合、「登録者数だけ多くて実際には見られていない
+# 死にチャンネル」とみなし除外する（2026-07-08「品質ゲートの厳格化」対応で追加）。
+YOUTUBE_MIN_TOTAL_VIEWS_PER_SUBSCRIBER = float(os.getenv("YOUTUBE_MIN_TOTAL_VIEWS_PER_SUBSCRIBER", "10.0"))
 
 # YouTube固有: 直近動画（ショート除く）の平均再生数がチャンネル登録者数に対して
 # この比率（既定0.2＝20%）未満のチャンネルは除外する（「登録者数と再生数の

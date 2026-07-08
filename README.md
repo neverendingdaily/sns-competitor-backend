@@ -101,12 +101,19 @@ uvicorn app.main:app --reload --port 8000
 
 | 基準 | 実装 | 既定値・設定 |
 |---|---|---|
-| X: FF比5倍以上 | `passes_universal_quality_gate`の`min_ff_ratio` | `X_MIN_FF_RATIO=5.0` |
-| Threads: FF比3〜5倍以上 | 同上（下限の3.0を採用） | `THREADS_MIN_FF_RATIO=3.0` |
+| X: FF比5.0以上 | `passes_universal_quality_gate`の`min_ff_ratio` | `X_MIN_FF_RATIO=5.0` |
+| Threads: FF比3.0以上 | 同上 | `THREADS_MIN_FF_RATIO=3.0` |
+| Instagram: FF比1.5以上 | 同上（2026-07-08の品質ゲート厳格化で1.0→1.5に引き上げ） | `INSTAGRAM_MIN_FF_RATIO=1.5` |
+| Instagram: 投稿数0のアカウントは例外なく除外 | 全プラットフォーム共通の`passes_universal_quality_gate`が`posts_count<=0`を無条件除外（元々全プラットフォーム共通で適用済み） | ─ |
 | X: エンゲージメントが「いいねだけでなく」定期的についている | `app/collectors/x/graphql.py`の`fetch_recent_tweets`が算出するengagement_rateに、リプライ・リポスト（従来から）に加えブックマーク数(`bookmark_count`)も合算するよう拡張 | `X_ENGAGEMENT_INCLUDE_BOOKMARKS=true`（既定有効） |
+| TikTok: フォロワーに対して総いいね数が極端に少ないアカウントを除外 | `TikTokCollector._passes_likes_ratio`。Brave Searchスニペットから総いいね数(Likes)が推測できた場合のみ、総いいね数÷フォロワー数がこの値未満なら除外。推測不可の場合はこのチェック自体をスキップし、フォロワー数・FF比・投稿数のみで判定する | `TIKTOK_MIN_LIKES_FOLLOWER_RATIO=1.0` |
 | YouTube: 直近の通常動画（ショート除く）の平均再生数が登録者数の20〜30%以上 | `YouTubeCollector._passes_view_subscriber_ratio`。直近アップロード（既定20件スキャン）から`contentDetails.duration`が60秒以下の動画をショートの近似シグナルとして除外し、残りの直近5件の平均再生数÷登録者数を判定 | `YOUTUBE_MIN_VIEW_SUBSCRIBER_RATIO=0.2`・`YOUTUBE_SHORTS_MAX_DURATION_SECONDS=60`・`YOUTUBE_RECENT_VIDEOS_SCAN=20`・`YOUTUBE_ENGAGEMENT_RECENT_POSTS=5` |
+| YouTube: 登録者数だけ多くて実際には見られていない「死にチャンネル」を除外 | `YouTubeCollector._passes_total_views_sanity`。チャンネルの生涯累計総視聴回数(`statistics.viewCount`、公式APIから直接取得・推測不要)÷登録者数がこの倍率未満なら除外 | `YOUTUBE_MIN_TOTAL_VIEWS_PER_SUBSCRIBER=10.0` |
+| 全SNS共通: スパムキーワードの拡充 | `DEFAULT_SPAM_KEYWORDS`に、フォローバック狙い等の従来キーワードに加え「ビジネス運用ではない個人の趣味/日常アカウント」を示す典型語（「趣味垢」「日常垢」「初心者」等）を追加 | `app/collectors/common/quality_gate.py` |
 
-上記は既存の「[全プラットフォーム共通の品質ゲート](#全プラットフォーム共通の品質ゲートbrave-searchスニペット解析)」（投稿数0除外・フォロワー数下限・スパムキーワード）にFF比の可変閾値として統合されている（`passes_universal_quality_gate(account, min_followers=..., min_ff_ratio=...)`、プラットフォームごとの既定値は`app/config.py`「全プラットフォーム共通の品質ゲート」セクション参照）。
+上記のFF比・スパムキーワードは既存の「[全プラットフォーム共通の品質ゲート](#全プラットフォーム共通の品質ゲートbrave-searchスニペット解析)」（投稿数0除外・フォロワー数下限）に統合されている（`passes_universal_quality_gate(account, min_followers=..., min_ff_ratio=...)`、プラットフォームごとの既定値は`app/config.py`「全プラットフォーム共通の品質ゲート」セクション参照）。TikTokのいいね数比率・YouTubeの2種類の再生数チェックは、Account本体のスキーマを汚さず追加シグナル（`likes`・`avg_views`・`total_views`）を`search()`内でのみ使う設計にしている（`profile_fetch.fetch_profile`/`YouTubeCollector._hydrate_channels`の戻り値がタプルになっているのはこのため。`get_account`による単体アカウント取得にはこれらの追加フィルタは適用しない）。
+
+**総いいね数(TikTok)の抽出について**: 依頼にあった「総再生数」はTikTokの本人プロフィールページのスニペットには通常含まれないことを実機確認済みのため（Following/Followers/Likesは含まれるが動画別・累計再生数の記載は無い）、代わりに実際に取得できる「総いいね数(Likes)」を判定に採用した（`app/collectors/common/snippet_signals.py`のLIKES_LABELSが抽出する）。
 
 ### 自動化していない項目（人間のレビューが必要）
 
